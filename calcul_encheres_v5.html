@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Calcul enchères – V5</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{ --gap:12px; --radius:10px; --pad:14px; --border:#e5e7eb; }
+    *{box-sizing:border-box}
+    body{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Arial;
+          margin:0; padding:24px; background:#f8fafc; color:#0f172a; }
+    h1{font-size:20px; margin:0 0 16px}
+    .card{ background:#fff; border:1px solid var(--border); border-radius: var(--radius);
+           padding: var(--pad); box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+    .grid{ display:grid; gap: var(--gap); grid-template-columns: repeat(12, 1fr); }
+    .field{ display:flex; flex-direction:column; gap:6px }
+    .field label{ font-size:12px; color:#374151 }
+    .field input{ padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:#fff; font-size:16px; }
+    .col-3{grid-column: span 3}
+    .col-4{grid-column: span 4}
+    .col-6{grid-column: span 6}
+    .col-12{grid-column: span 12}
+    .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+    button{ border:1px solid #111827; background:#111827; color:#fff; padding:12px 14px; border-radius:8px; font-weight:600; cursor:pointer; }
+    button.secondary{ background:#fff; color:#111827; border-color:#111827; }
+    table{ width:100%; border-collapse: collapse; background:#fff; border:1px solid var(--border); border-radius: var(--radius); overflow:hidden; }
+    th, td{ padding:10px 12px; border-bottom:1px solid var(--border); font-size:14px; text-align:left; }
+    th{ background:#f3f4f6; font-weight:700 }
+    tfoot td{ font-weight:700; background:#f9fafb }
+    .td-actions button{ padding:6px 10px; font-size:12px; border-radius:6px; }
+    .danger{ background:#b91c1c; border-color:#7f1d1d; }
+    @media (max-width: 900px){ .col-3, .col-4, .col-6{grid-column: span 12} }
+  </style>
+</head>
+<body>
+  <div class="container" style="display:grid; gap:16px; max-width:1100px; margin:0 auto">
+    <h1>Calcul enchères</h1>
+
+    <div class="card">
+      <div class="grid">
+        <div class="field col-3">
+          <label for="lot">Lot (optionnel)</label>
+          <input id="lot" type="text" placeholder="Ex : 124A" />
+        </div>
+
+        <div class="field col-3">
+          <label for="poids">Poids</label>
+          <input id="poids" inputmode="decimal" placeholder="Ex : 12,50" />
+        </div>
+
+        <div class="field col-3">
+          <label for="prixg">Prix / g</label>
+          <input id="prixg" inputmode="decimal" placeholder="Ex : 38,70" />
+        </div>
+
+        <div class="field col-3">
+          <label for="frais">Frais (%)</label>
+          <input id="frais" inputmode="decimal" placeholder="Ex : 18,00" />
+        </div>
+
+        <div class="field col-3">
+          <label for="enchere">Prix enchère</label>
+          <input id="enchere" inputmode="decimal" placeholder="Auto" />
+        </div>
+
+        <div class="field col-3">
+          <label for="prixFinal">Prix final</label>
+          <input id="prixFinal" inputmode="decimal" placeholder="Auto" />
+        </div>
+
+        <div class="col-12 row">
+          <button id="btnCalculer">Calculer & ajouter au tableau</button>
+          <button class="secondary" id="btnCSV">Télécharger le CSV</button>
+          <button class="secondary" id="btnClear">Vider le tableau</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 10px; font-size:16px;">Tableau des lignes</h2>
+      <div style="overflow:auto;">
+        <table id="tbl">
+          <thead>
+            <tr>
+              <th>Lot</th>
+              <th>Poids</th>
+              <th>Prix/g</th>
+              <th>Enchère</th>
+              <th>Prix final</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="4">Total</td>
+              <td id="totalCell">0</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- utilitaires nombre (virgule/point) ---
+    function parseNum(val){
+      if(val === null || val === undefined) return NaN;
+      if(typeof val !== 'string') val = String(val);
+      val = val.replace(/[ \u00A0]/g,'').trim();
+      if(val === '') return NaN;
+      val = val.replace(/,/g, '.'); // accepte virgule et point
+      val = val.replace(/[^0-9eE+\-\.]/g, '');
+      return parseFloat(val);
+    }
+    function fmt2(n){
+      if(!isFinite(n)) return '';
+      return n.toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+    function fmtInt(n){
+      if(!isFinite(n)) return '';
+      return Math.round(n).toLocaleString('fr-FR');
+    }
+
+    // --- éléments ---
+    const el = {
+      lot: document.getElementById('lot'),
+      poids: document.getElementById('poids'),
+      prixg: document.getElementById('prixg'),
+      frais: document.getElementById('frais'),
+      enchere: document.getElementById('enchere'),
+      prixFinal: document.getElementById('prixFinal'),
+      btnCalculer: document.getElementById('btnCalculer'),
+      btnCSV: document.getElementById('btnCSV'),
+      btnClear: document.getElementById('btnClear'),
+      tblBody: document.querySelector('#tbl tbody'),
+      totalCell: document.getElementById('totalCell')
+    };
+
+    let lastChanged = null;
+    let rows = []; // {id, lot, poids, prixg, enchere, prixFinal}
+
+    const STORAGE_KEY = 'enchere_rows_v2';
+
+    function saveRows(){
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); }catch(e){ /* ignore */ }
+    }
+    function loadRows(){
+      try{
+        const txt = localStorage.getItem(STORAGE_KEY);
+        rows = txt ? (JSON.parse(txt) || []) : [];
+      }catch(e){ rows = []; }
+    }
+    function updateTotal(){
+      const sum = rows.reduce((acc, r) => acc + Math.round(r.prixFinal || 0), 0);
+      el.totalCell.textContent = sum.toLocaleString('fr-FR');
+    }
+    function rebuildTable(){
+      el.tblBody.innerHTML = '';
+      rows.forEach(r => appendRow(r));
+      updateTotal();
+    }
+
+    function recalc(){
+      const poids = parseNum(el.poids.value);
+      const prixg = parseNum(el.prixg.value);
+      const frais = parseNum(el.frais.value) || 0;
+      const factor = 1 + (frais/100);
+      let enchere = NaN, prixFinal = NaN, newPrixg = prixg;
+
+      if(lastChanged === 'enchere'){
+        const enchereVal = parseNum(el.enchere.value);
+        if(isFinite(enchereVal) && isFinite(poids) && poids > 0 && isFinite(factor) && factor !== 0){
+          newPrixg = (enchereVal * factor) / poids;
+          el.prixg.value = fmt2(newPrixg);
+          enchere = enchereVal;
+          prixFinal = enchereVal * factor;
+          el.prixFinal.value = fmt2(prixFinal);
+        }
+      } else if(lastChanged === 'prixFinal'){
+        const prixFinalVal = parseNum(el.prixFinal.value);
+        if(isFinite(prixFinalVal) && isFinite(poids) && poids > 0 && isFinite(factor) && factor !== 0){
+          enchere = prixFinalVal / factor;
+          el.enchere.value = fmt2(enchere);
+          newPrixg = prixFinalVal / poids;
+          el.prixg.value = fmt2(newPrixg);
+        }
+      } else {
+        if(isFinite(poids) && isFinite(prixg) && isFinite(factor) && factor !== 0){
+          enchere = (poids * prixg) / factor;
+          prixFinal = enchere * factor; // = poids * prixg
+          el.enchere.value = fmt2(enchere);
+          el.prixFinal.value = fmt2(prixFinal);
+        }
+      }
+    }
+
+    ['poids','prixg','frais'].forEach(id=>{
+      el[id].addEventListener('input', ()=>{ lastChanged = id; recalc(); });
+    });
+    el.enchere.addEventListener('input', ()=>{ lastChanged = 'enchere'; recalc(); });
+    el.prixFinal.addEventListener('input', ()=>{ lastChanged = 'prixFinal'; recalc(); });
+
+    el.btnCalculer.addEventListener('click', ()=>{
+      lastChanged = null;
+      recalc();
+      const lot = (el.lot.value || '').trim();
+      const poids = parseNum(el.poids.value);
+      const prixg = parseNum(el.prixg.value);
+      const enchere = parseNum(el.enchere.value);
+      const frais = parseNum(el.frais.value) || 0;
+      const factor = 1 + (frais/100);
+      if(!isFinite(poids) || poids <= 0){ alert('Veuillez saisir un Poids valide.'); return; }
+      if(!isFinite(prixg) || prixg <= 0){ alert('Veuillez saisir un Prix/g valide.'); return; }
+      if(!isFinite(enchere) || enchere <= 0){ alert('Le Prix enchère est invalide.'); return; }
+      const prixFinal = enchere * factor; // calculé à l'ajout
+      const row = { id: Date.now() + Math.random().toString(16).slice(2), lot, poids, prixg, enchere, prixFinal };
+      rows.push(row);
+      appendRow(row);
+      saveRows();
+      updateTotal();
+    });
+
+    function appendRow(r){
+      const tr = document.createElement('tr');
+      tr.dataset.id = r.id;
+      const tdLot = document.createElement('td'); tdLot.textContent = r.lot || '';
+      const tdPoids = document.createElement('td'); tdPoids.textContent = fmt2(r.poids);
+      const tdPrixg = document.createElement('td'); tdPrixg.textContent = fmt2(r.prixg);
+      const tdEnchere = document.createElement('td'); tdEnchere.textContent = fmtInt(r.enchere);
+      const tdFinal = document.createElement('td'); tdFinal.textContent = fmtInt(r.prixFinal);
+      const tdAct = document.createElement('td'); tdAct.className = 'td-actions';
+      const btnDel = document.createElement('button'); btnDel.textContent = 'Supprimer'; btnDel.className = 'danger';
+      btnDel.addEventListener('click', ()=>{
+        const id = tr.dataset.id;
+        rows = rows.filter(x => x.id !== id);
+        tr.remove();
+        saveRows();
+        updateTotal();
+      });
+      tdAct.appendChild(btnDel);
+      tr.append(tdLot, tdPoids, tdPrixg, tdEnchere, tdFinal, tdAct);
+      el.tblBody.appendChild(tr);
+    }
+
+    el.btnCSV.addEventListener('click', ()=>{
+      if(rows.length === 0){ alert('Le tableau est vide.'); return; }
+      const headers = ['Lot','Poids','Prix/g','Enchère','Prix final'];
+      const lines = [headers.join(';')];
+      rows.forEach(r=>{
+        const line = [
+          (r.lot || ''),
+          (isFinite(r.poids)? r.poids.toFixed(2).replace('.', ',') : ''),
+          (isFinite(r.prixg)? r.prixg.toFixed(2).replace('.', ',') : ''),
+          String(Math.round(r.enchere)).replace('.', ','),
+          String(Math.round(r.prixFinal)).replace('.', ',')
+        ].join(';');
+        lines.push(line);
+      });
+      // total row
+      const total = rows.reduce((a,r)=>a+Math.round(r.prixFinal||0),0);
+      lines.push(['TOTAL','','','', String(total)].join(';'));
+
+      const csv = lines.join('\n');
+      const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'lignes_encheres.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+
+    el.btnClear.addEventListener('click', ()=>{
+      if(!confirm('Vider le tableau et supprimer la mémoire locale ?')) return;
+      rows = [];
+      el.tblBody.innerHTML = '';
+      try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
+      updateTotal();
+    });
+
+    // init
+    loadRows();
+    rebuildTable();
+    recalc();
+  </script>
+</body>
+</html>
